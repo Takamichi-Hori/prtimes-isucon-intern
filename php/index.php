@@ -131,6 +131,14 @@ $container->set('helper', function ($c) {
             $options += ['all_comments' => false];
             $all_comments = $options['all_comments'];
 
+            $userCache = [];
+            $getUser = function ($userId) use (&$userCache) {
+                if (!array_key_exists($userId, $userCache)) {
+                    $userCache[$userId] = $this->fetch_first('SELECT * FROM `users` WHERE `id` = ?', $userId);
+                }
+                return $userCache[$userId];
+            };
+
             $posts = [];
             foreach ($results as $post) {
                 $post['comment_count'] = $this->fetch_first('SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?', $post['id'])['count'];
@@ -143,12 +151,12 @@ $container->set('helper', function ($c) {
                 $ps->execute([$post['id']]);
                 $comments = $ps->fetchAll(PDO::FETCH_ASSOC);
                 foreach ($comments as &$comment) {
-                    $comment['user'] = $this->fetch_first('SELECT * FROM `users` WHERE `id` = ?', $comment['user_id']);
+                    $comment['user'] = $getUser($comment['user_id']);
                 }
                 unset($comment);
                 $post['comments'] = array_reverse($comments);
 
-                $post['user'] = $this->fetch_first('SELECT * FROM `users` WHERE `id` = ?', $post['user_id']);
+                $post['user'] = $getUser($post['user_id']);
                 if ($post['user']['del_flg'] == 0) {
                     $posts[] = $post;
                 }
