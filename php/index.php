@@ -141,29 +141,56 @@ $container->set('helper', function ($c) {
 
             $posts = [];
             foreach ($results as $post) {
-                $post['comment_count'] = $this->fetch_first('SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?', $post['id'])['count'];
-                $query = 'SELECT * FROM `comments` WHERE `post_id` = ? ORDER BY `created_at` DESC';
-                if (!$all_comments) {
-                    $query .= ' LIMIT 3';
-                }
-
-                $ps = $this->db()->prepare($query);
-                $ps->execute([$post['id']]);
-                $comments = $ps->fetchAll(PDO::FETCH_ASSOC);
-                foreach ($comments as &$comment) {
-                    $comment['user'] = $getUser($comment['user_id']);
-                }
-                unset($comment);
-                $post['comments'] = array_reverse($comments);
-
                 $post['user'] = $getUser($post['user_id']);
-                if ($post['user']['del_flg'] == 0) {
+                if ($post['user'] && $post['user']['del_flg'] == 0) {
                     $posts[] = $post;
-                }
-                if (count($posts) >= POSTS_PER_PAGE) {
-                    break;
+                    if (count($posts) >= POSTS_PER_PAGE) {
+                        break;
+                    }
+                    
                 }
             }
+
+            if (!$posts) {
+                return [];
+            }
+
+            $postIds = array_column($posts, 'id');
+            $placeholders = implode(',', array_fill(0, count($postIds), '?'));
+
+            $sql = "
+                SELECT `id`, `post_id`, `user_id`, `comment`, `created_at`, `total_count`
+                FROM (
+                    SELECT c.*, COUNT(*) OVER (PARTITION BY c.`post_id`) AS `total_count`,
+                        ROW_NUMBER() OVER (PARTITION BY c. `post_id` ORDER BY c. `created_at` DESC) AS `rn` FROM `comments` AS c WHERE c. `post_id` IN ($placeholders)) AS ranked";
+                
+            if (!$all_comments) {
+                $sql .= ' WHERE `rn` <= 3';
+            }
+            $sql .= ' ORDER BY `post_id`, `created_at` DESC';
+
+            $ps = $this->db()->prepare($sql);
+            $ps->execute($postIds);
+            $comments = $ps -> fetchAll(PDO::FETCH_ASSOC);
+
+            $commentCounts = [];
+            $commentsByPost = [];
+
+            foreach ($comments as $comment) {
+                $postId = $comment['post_id'];
+                $commentCounts[$postId] = (int)$comment['total_count'];
+                unset($comment['total_count']);
+
+                $comment['user'] = $getUser($comment['user_id']);
+                $commentsByPost[$postId][] = $comment;
+            }
+
+            foreach ($posts as &$post) {
+                $post['comment_count'] = $commentCounts[$post['id']] ?? 0;
+                $post['comments'] = array_reverse($commentsByPost[$post['id']] ?? []);
+            }
+            unset($post);
+
             return $posts;
         }
 
